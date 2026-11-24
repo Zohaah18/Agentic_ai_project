@@ -1,0 +1,12 @@
+# Core
+yfinance>=0.2.40
+ddgs>=9.0.0
+python-dotenv>=1.0.0
+# Agentic mode (open-source LLM through local Ollama server: free)
+ollama>=0.4.0
+# Web interface
+streamlit>=1.35.0
+# Optional: MCP data provider
+mcp>=1.0.0
+# Dev
+pytest>=8.0.0
