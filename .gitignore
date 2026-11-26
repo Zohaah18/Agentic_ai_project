@@ -1,7 +1,0 @@
-.env
-logs/
-*.pyc
-__pycache__/
-.venv/
-KILL_SWITCH
-eval_results.csv
