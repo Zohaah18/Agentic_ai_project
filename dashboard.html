@@ -1,0 +1,58 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sentinel control plane</title>
+<style>
+:root{--bg:#fff;--fg:#1a1a1a;--mut:#666;--card:#f5f5f4;--line:#ddd;--ok:#0a7d33;--bad:#b3261e;--acc:#1f5fbf}
+@media(prefers-color-scheme:dark){:root{--bg:#161616;--fg:#eee;--mut:#9a9a9a;--card:#222;--line:#383838;--ok:#4cc27a;--bad:#ff7b72;--acc:#7aa7ff}}
+body{font:14px system-ui,sans-serif;background:var(--bg);color:var(--fg);margin:0;padding:16px;max-width:980px;margin:auto}
+h1{font-size:18px}h2{font-size:15px;margin:20px 0 8px}.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px;margin:8px 0}
+input,button{font:inherit;padding:6px 10px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--fg)}
+button{cursor:pointer}button.go{background:var(--acc);color:#fff;border:0}button.no{color:var(--bad)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.mut{color:var(--mut)}.ok{color:var(--ok)}.bad{color:var(--bad)}
+table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;border-bottom:1px solid var(--line);font-size:13px;vertical-align:top}
+.wrap{overflow-x:auto}
+</style></head><body>
+<h1>Sentinel — human control plane</h1>
+<div id="login" class="card row"><input id="u" placeholder="username"><input id="p" type="password" placeholder="password"><button class="go" id="lb">Sign in</button><span id="msg" class="bad"></span></div>
+<div id="app" hidden>
+ <div class="row"><span id="who" class="mut"></span><button id="rf">Refresh</button><button id="ks" class="no">Kill switch</button></div>
+ <h2>System status</h2><div id="status" class="card"></div>
+ <h2>Run analysis (operator)</h2><div class="card row"><input id="sy" value="AAPL,MSFT,NVDA" size="26"><button class="go" id="run">Run agents</button><span id="rmsg" class="mut"></span></div>
+ <h2>Proposals awaiting a human</h2><div id="props"></div>
+ <h2>Open paper positions</h2><div id="pos" class="card wrap"></div>
+ <h2>Audit trail (hash-chained)</h2><div id="audit" class="card wrap"></div>
+</div>
+<script>
+let T=null,ROLE="";const $=i=>document.getElementById(i);
+const el=(t,txt,cls)=>{const e=document.createElement(t);if(txt!==undefined)e.textContent=txt;if(cls)e.className=cls;return e};
+async function api(path,method="GET",body){const r=await fetch(path,{method,headers:{"Content-Type":"application/json",...(T?{Authorization:"Bearer "+T}:{})},body:body?JSON.stringify(body):undefined});
+ const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||j.detail||r.status);return j}
+$("lb").onclick=async()=>{try{const j=await api("/auth/login","POST",{username:$("u").value,password:$("p").value});T=j.token;ROLE=j.role;
+ $("login").hidden=true;$("app").hidden=false;$("who").textContent=$("u").value+" ("+ROLE+")";refresh()}catch(e){$("msg").textContent=e.message}};
+function kv(o){return Object.entries(o).map(([k,v])=>k+": "+(typeof v==="object"?JSON.stringify(v):v)).join("  ·  ")}
+async function refresh(){
+ try{const s=await api("/status");const d=$("status");d.replaceChildren(
+  el("div","Kill switch: "+(s.kill_switch.engaged?"ENGAGED — "+s.kill_switch.reason:"off"),s.kill_switch.engaged?"bad":"ok"),
+  el("div","Daily loss budget remaining: $"+s.daily_budget_remaining+"   ·   Realized P&L today: $"+s.realized_pnl_today),
+  el("div","Audit chain: "+(s.audit_chain_ok?"intact":"TAMPERED"),s.audit_chain_ok?"ok":"bad"))}catch(e){}
+ try{const ps=await api("/proposals?status=PENDING_HUMAN");const box=$("props");box.replaceChildren();
+  if(!ps.length)box.append(el("div","None pending.","mut card"));
+  ps.forEach(p=>{const pl=p.payload,d=pl.decision,c=el("div",null,"card");
+   c.append(el("b",pl.symbol+" BUY × "+p.payload.quantity+" @ "+pl.price+"  ("+p.id+")"),el("div","Requested by "+p.requested_by+" · data: "+pl.data_source+" · confidence "+pl.confidence+" · hallucination risk "+pl.hallucination_risk,"mut"),
+    el("div","Why: "+pl.rationale),el("div","Exposure — "+kv(d.exposure)),el("div","Protections — stop "+d.protections.stop_price+" · take-profit "+d.protections.take_profit_price),
+    el("div","Ethics — "+d.ethics.map(e=>e.rule+(e.pass?" ✓":" ✗")).join(" · "),"mut"));
+   const r=el("div",null,"row"),n=el("input");n.placeholder="note";
+   const a=el("button","Approve → paper order","go"),x=el("button","Reject","no");
+   a.onclick=()=>act(p.id,"approve",n.value);x.onclick=()=>act(p.id,"reject",n.value);r.append(n,a,x);c.append(r);box.append(c)})}catch(e){}
+ try{const ps=await api("/positions");const t=el("table");t.append(Object.assign(el("tr"),{}));
+  const h=el("tr");["symbol","qty","entry","stop","take-profit"].forEach(x=>h.append(el("th",x)));t.append(h);
+  ps.forEach(p=>{const r=el("tr");[p.symbol,p.qty,p.entry,p.stop,p.tp].forEach(x=>r.append(el("td",x)));t.append(r)});$("pos").replaceChildren(ps.length?t:el("span","None open.","mut"))}catch(e){}
+ try{const a=await api("/audit?limit=15");const t=el("table");a.reverse().forEach(e=>{const r=el("tr");
+  [e.seq,new Date(e.ts*1000).toLocaleTimeString(),e.type,e.actor,JSON.stringify(e.data).slice(0,140)].forEach(x=>r.append(el("td",x)));t.append(r)});$("audit").replaceChildren(t)}catch(e){}}
+async function act(id,what,note){try{await api("/proposals/"+id+"/"+what,"POST",{note});}catch(e){alert(e.message)}refresh()}
+$("run").onclick=async()=>{$("rmsg").textContent="running agents…";try{const r=await api("/runs","POST",{symbols:$("sy").value.split(",").map(s=>s.trim().toUpperCase()).filter(Boolean)});
+ $("rmsg").textContent=r.map(x=>x.symbol+": "+x.status).join(" | ")}catch(e){$("rmsg").textContent=e.message}refresh()};
+$("rf").onclick=refresh;
+$("ks").onclick=async()=>{const s=await api("/status");const eng=!s.kill_switch.engaged;const reason=prompt(eng?"Reason to ENGAGE kill switch:":"Reason to RELEASE:");if(!reason)return;
+ try{await api("/kill-switch","POST",{engaged:eng,reason})}catch(e){alert(e.message)}refresh()};
+setInterval(()=>{if(T)refresh()},15000);
+</script></body></html>
